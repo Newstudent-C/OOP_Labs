@@ -5,9 +5,7 @@ import java.util.List;
 // Кастомна модель даних для JTable
 class EnergyTableModel extends AbstractTableModel {
     // Назви колонок, які побачить користувач
-    private final String[] columnNames = {"Рік", "Місяць", "Спожито (кВт)", "Тариф (грн)", "Сума (грн)"};
-
-    // Список даних, які відображаються в таблиці ПРЯМО ЗАРАЗ
+    private final String[] columnNames = {"Рік", "Місяць", "Початок", "Кінець", "Спожито (кВт)", "Тариф (грн)", "Сума (грн)"};
     private List<CurrentMonth> displayedRows;
 
     public EnergyTableModel() {
@@ -41,6 +39,10 @@ class EnergyTableModel extends AbstractTableModel {
     }
 
     // Головний метод: каже таблиці, що писати в конкретній клітинці
+    private String formatKw(double value) {
+        return (value % 1 == 0) ? String.valueOf((long) value) : String.valueOf(value);
+    }
+
     @Override
     public Object getValueAt(int rowIndex, int columnIndex) {
         CurrentMonth record = displayedRows.get(rowIndex);
@@ -48,9 +50,11 @@ class EnergyTableModel extends AbstractTableModel {
         return switch (columnIndex) {
             case 0 -> record.currYear;
             case 1 -> record.currMonth;
-            case 2 -> record.amountOfUsedElectricity;
-            case 3 -> record.currKWhPrice;
-            case 4 -> record.totalMonthCheck;
+            case 2 -> formatKw(record.getStartReading()); // Розумний формат
+            case 3 -> formatKw(record.getEndReading());   // Розумний формат
+            case 4 -> formatKw(record.getCalculatedConsumedEnergyAmount()); // Розумний формат
+            case 5 -> String.format("%.2f", record.currKWhPrice); // Гроші завжди з 2 нулями
+            case 6 -> String.format("%.2f", record.getCalculatedFinalCheck()); // Гроші завжди з 2 нулями
             default -> null;
         };
     }

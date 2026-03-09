@@ -14,7 +14,9 @@ public class MainApp extends JFrame {
     protected JPanel inputPanel;
     protected JTextField tfYear = new JTextField("2026", 4);
     protected JComboBox<Month> cbMonth = new JComboBox<>(Month.values());
-    protected JTextField tfUsage = new JTextField("100", 5);
+
+    protected JTextField tfStartReading = new JTextField("1000", 6);
+    protected JTextField tfEndReading = new JTextField("1100", 6);
     protected JTextField tfPrice = new JTextField("4.32", 4);
     protected JButton btnAdd = new JButton("Додати запис");
 
@@ -40,14 +42,11 @@ public class MainApp extends JFrame {
 
     protected void buildInputPanel() {
         inputPanel = new JPanel(new FlowLayout());
-        inputPanel.add(new JLabel("Рік:"));
-        inputPanel.add(tfYear);
-        inputPanel.add(new JLabel("Місяць:"));
-        inputPanel.add(cbMonth);
-        inputPanel.add(new JLabel("Спожито (кВт):"));
-        inputPanel.add(tfUsage);
-        inputPanel.add(new JLabel("Ціна (грн):"));
-        inputPanel.add(tfPrice);
+        inputPanel.add(new JLabel("Рік:")); inputPanel.add(tfYear);
+        inputPanel.add(new JLabel("Місяць:")); inputPanel.add(cbMonth);
+        inputPanel.add(new JLabel("Початок:")); inputPanel.add(tfStartReading);
+        inputPanel.add(new JLabel("Кінець:")); inputPanel.add(tfEndReading);
+        inputPanel.add(new JLabel("Тариф:")); inputPanel.add(tfPrice);
         inputPanel.add(btnAdd);
         add(inputPanel, BorderLayout.NORTH);
     }
@@ -81,24 +80,51 @@ public class MainApp extends JFrame {
         btnAdd.addActionListener(e -> addRecordAction());
         btnFilter.addActionListener(e -> filterRecordsAction());
         btnShowAll.addActionListener(e -> updateTable(allDataStorage));
+
+        cbMonth.addActionListener(e -> {
+            try {
+                int y = Integer.parseInt(tfYear.getText());
+                Month m = (Month) cbMonth.getSelectedItem();
+                long prevIndex = ((long) y * 12 + m.getValue()) - 1;
+
+                for (CurrentMonth item : allDataStorage) {
+                    long itemIndex = (long) item.currYear * 12 + item.currMonth.getValue();
+                    if (itemIndex == prevIndex) {
+                        // Виклик віртуального методу. Поліморфізм зробить всю магію.
+                        autoFillStartReadings(item);
+                        break;
+                    }
+                }
+            } catch (NumberFormatException ex) {
+                // Ігноруємо, якщо користувач ще не ввів рік
+            }
+        });
     }
 
     protected void addRecordAction() {
         try {
             int y = Integer.parseInt(tfYear.getText());
             Month m = (Month) cbMonth.getSelectedItem();
-            double usage = Double.parseDouble(tfUsage.getText());
+            int startRead = Integer.parseInt(tfStartReading.getText());
+            int endRead = Integer.parseInt(tfEndReading.getText());
             double price = Double.parseDouble(tfPrice.getText());
 
             if (isRecordExists(m, y)) {
-                JOptionPane.showMessageDialog(this, "Помилка: Запис за " + m + " " + y + " вже існує!", "Дублікат", JOptionPane.WARNING_MESSAGE);
-                return; // Зупиняємо виконання, не додаємо об'єкт
+                JOptionPane.showMessageDialog(this, "Запис за цей період вже існує.");
+                return;
+            }
+
+            if (!isMeterLogicValid(y, m, startRead, endRead)) {
+                return; // Переривання, якщо валідація лічильника не пройдена
             }
 
             CurrentMonth cm = new CurrentMonth(m, y);
-            cm.amountOfUsedElectricity = usage;
+            cm.startMeterReading = startRead;
+            cm.endMeterReading = endRead;
             cm.currKWhPrice = price;
-            cm.calculateFinalCheck();
+
+            cm.calculateUsage();      // Спочатку дельта
+            cm.calculateFinalCheck(); // Потім сума
 
             allDataStorage.add(cm);
             updateTable(allDataStorage);
@@ -131,6 +157,15 @@ public class MainApp extends JFrame {
     }
 
     protected void updateTable(List<CurrentMonth> data) {
+        // Використовуємо лінійний індекс часу для порівняння
+        data.sort((itemA, itemB) -> {
+            int indexA = itemA.currYear * 12 + itemA.currMonth.getValue();
+            int indexB = itemB.currYear * 12 + itemB.currMonth.getValue();
+
+            // Порівнюємо B з A (а не A з B), щоб отримати зворотній порядок (від найновішого до найстарішого)
+            return Integer.compare(indexB, indexA);
+        });
+
         tableModel.setRows(data);
 
         double totalKw = 0;
@@ -154,7 +189,50 @@ public class MainApp extends JFrame {
         return false;
     }
 
+    protected boolean isMeterLogicValid(int targetYear, Month targetMonth, double startReading, double endReading) {
+        if (startReading > endReading) {
+            JOptionPane.showMessageDialog(this, "Помилка: Початковий показник більший за кінцевий.", "Помилка лічильника", JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+
+        long targetIndex = (long) targetYear * 12 + targetMonth.getValue();
+
+        for (CurrentMonth item : allDataStorage) {
+            long itemIndex = (long) item.currYear * 12 + item.currMonth.getValue();
+
+            // СУВОРА ПЕРЕВІРКА: Якщо це рівно попередній місяць
+            if (itemIndex == targetIndex - 1) {
+                if (Math.abs(startReading - item.endMeterReading) > 0.001) {
+                    JOptionPane.showMessageDialog(this,
+                            "Помилка: Показник початку не збігається з кінцем попереднього місяця (" + item.endMeterReading + ").",
+                            "Хронологічна помилка", JOptionPane.ERROR_MESSAGE);
+                    return false;
+                }
+            }
+            // Захист від введення неможливих даних для інших періодів
+            else if (itemIndex < targetIndex && item.endMeterReading > startReading) {
+                JOptionPane.showMessageDialog(this, "Помилка: Показник менший за історію.", "Помилка", JOptionPane.ERROR_MESSAGE);
+                return false;
+            }
+            else if (itemIndex > targetIndex && item.startMeterReading < endReading) {
+                JOptionPane.showMessageDialog(this, "Помилка: Показник більший за майбутні записи.", "Помилка", JOptionPane.ERROR_MESSAGE);
+                return false;
+            }
+        }
+        return true;
+    }
+
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> new MainApp().setVisible(true));
+    }
+
+    protected void autoFillStartReadings(CurrentMonth prevMonth) {
+        if (tfStartReading != null) {
+            double val = prevMonth.getEndReading();
+            // Якщо остача від ділення на 1 дорівнює 0, значить число ціле.
+            // Приводимо до (long), щоб відрізати ".0"
+            String text = (val % 1 == 0) ? String.valueOf((long) val) : String.valueOf(val);
+            tfStartReading.setText(text);
+        }
     }
 }
